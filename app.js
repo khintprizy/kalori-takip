@@ -434,16 +434,30 @@
       <h3>${esc(f.name)}</h3>
       <div class="small muted">1 porsiyon = ${esc(f.portion || '—')} · ${f0(f.kcal)} kcal · ${f1(f.protein)} g protein</div>
       <div class="qty">${opts.map((q) => `<button data-act="addQty" data-v="${q}"><b>${f1(q)}</b><span>${f0(f.kcal * q)} kcal</span></button>`).join('')}</div>
-      <label for="customQty">${f.grams ? `veya miktar gir (${/ml/i.test(f.portion) ? 'ml' : 'gram'})` : 'veya porsiyon sayısı gir'}</label>
+      ${f.grams ? `
+      <label for="customQty">veya miktar gir (${/ml/i.test(f.portion) ? 'ml' : 'gram'})</label>
       <div class="inline">
-        <input id="customQty" inputmode="decimal" placeholder="${f.grams ? 'örn. 250' : 'örn. 3'}" autocomplete="off">
+        <input id="customQty" inputmode="decimal" placeholder="örn. 250" autocomplete="off">
         <button class="btn primary" data-act="addCustom">Ekle</button>
       </div>
-      <div class="small muted" id="customPreview" style="min-height:20px;margin-top:6px">${f.grams ? '' : 'Gramla eklemek için yiyeceği düzenleyip porsiyon gramını gir.'}</div>
+      <div class="small muted" id="customPreview" style="min-height:20px;margin-top:6px"></div>` : `
+      <label>veya sayı seç</label>
+      <div class="inline pstep">
+        <button data-act="pStep" data-v="-1" aria-label="Azalt">−</button>
+        <output id="pQty">${STEP_START}</output>
+        <button data-act="pStep" data-v="1" aria-label="Artır">+</button>
+        <button class="btn primary" data-act="addStepper">Ekle</button>
+      </div>
+      <div class="small muted" id="customPreview" style="min-height:20px;margin-top:6px">${esc(stepperPreview(f, STEP_START))}</div>`}
       <div class="btns two">
         <button class="btn" data-act="foodEdit" data-id="${f.id}">Düzenle</button>
         <button class="btn" data-act="closeSheet">Vazgeç</button>
-      </div>`, { food: f });
+      </div>`, { food: f, pq: STEP_START });
+  }
+
+  const STEP_START = 1;
+  function stepperPreview(f, q) {
+    return `${qtyLabel(f, q, null)} · ${f0(f.kcal * q)} kcal · ${f1(f.protein * q)} g protein`;
   }
 
   function customQty() {
@@ -601,6 +615,16 @@
       const c = customQty();
       if (!c) { $('#customQty').focus(); return; }
       const f = sheetCtx.food; closeSheet(); addEntries([makeEntry(f, c.qty, c.grams)], `${f.name} eklendi`);
+    },
+    pStep: (b) => {
+      const f = sheetCtx.food;
+      sheetCtx.pq = Math.max(1, sheetCtx.pq + +b.dataset.v);
+      $('#pQty').textContent = sheetCtx.pq;
+      $('#customPreview').textContent = stepperPreview(f, sheetCtx.pq);
+    },
+    addStepper: () => {
+      const f = sheetCtx.food; const q = sheetCtx.pq;
+      closeSheet(); addEntries([makeEntry(f, q, null)], `${f.name} eklendi`);
     },
     delEntry: (b) => {
       const e = S.entries.find((x) => x.id === b.dataset.id);
