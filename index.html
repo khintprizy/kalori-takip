@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kalori Takip</title>
+<meta name="theme-color" content="#f6f7f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121412" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Kalori">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<style>
+:root {
+  --bg: #f6f7f5; --card: #ffffff; --text: #1a1d1a; --muted: #6b716b; --line: #e3e6e2;
+  --accent: #1f8a4c; --accent-soft: #e2f3e8; --warn: #c2620c; --warn-soft: #fbeedd;
+  --danger: #c0392b; --track: #e9ece8; --band: rgba(31,138,76,.18);
+  --radius: 14px; --shadow: 0 1px 2px rgba(0,0,0,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121412; --card: #1c1f1c; --text: #eceeea; --muted: #9aa19a; --line: #2c302c;
+    --accent: #3fbf75; --accent-soft: #1c3526; --warn: #f0a04b; --warn-soft: #3a2a17;
+    --danger: #ef6b5b; --track: #2a2e2a; --band: rgba(63,191,117,.22); --shadow: none;
+  }
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body {
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding: env(safe-area-inset-top) 0 calc(72px + env(safe-area-inset-bottom));
+  -webkit-text-size-adjust: 100%;
+}
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; border: 0; background: none; touch-action: manipulation; }
+input {
+  width: 100%; min-height: 48px; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--card); font-size: 16px;
+}
+input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+label { display: block; font-size: 14px; color: var(--muted); margin: 12px 0 4px; }
+main { max-width: 640px; margin: 0 auto; padding: 12px 16px; }
+h2 { font-size: 15px; font-weight: 600; color: var(--muted); margin: 22px 0 10px; display: flex; align-items: center; justify-content: space-between; }
+.card { background: var(--card); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); border: 1px solid var(--line); }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+
+/* Üst kısım */
+.daterow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.daterow .date { font-weight: 600; text-align: center; flex: 1; }
+.iconbtn { min-width: 48px; min-height: 48px; border-radius: 12px; font-size: 22px; display: grid; place-items: center; }
+.iconbtn:disabled { opacity: .25; }
+.status { font-size: 12px; color: var(--muted); text-align: center; min-height: 16px; }
+.status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 5px; vertical-align: 0; }
+.status.pending .dot { background: var(--warn); }
+.status.offline .dot { background: var(--muted); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--track); border-radius: 12px; padding: 4px; margin: 8px 0 14px; }
+.seg button { min-height: 44px; border-radius: 9px; font-weight: 600; color: var(--muted); }
+.seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+
+/* Toplamlar */
+.total { display: grid; gap: 14px; }
+.metric .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.metric .big { font-size: 30px; font-weight: 700; letter-spacing: -.5px; }
+.metric .unit { font-size: 15px; font-weight: 600; color: var(--muted); margin-left: 3px; }
+.metric .goal { font-size: 14px; color: var(--muted); text-align: right; }
+.bar { position: relative; height: 12px; background: var(--track); border-radius: 6px; overflow: hidden; margin-top: 6px; }
+.bar .band { position: absolute; top: 0; bottom: 0; background: var(--band); }
+.bar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; background: var(--muted); transition: width .25s; }
+.bar .fill.ok { background: var(--accent); }
+.bar .fill.over { background: var(--warn); }
+.macros { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+.macros div { font-size: 14px; color: var(--muted); }
+.macros b { display: block; font-size: 20px; color: var(--text); }
+
+/* Butonlar */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.food {
+  min-height: 72px; text-align: left; padding: 10px 12px; border-radius: 12px;
+  background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; justify-content: center;
+}
+.food:active, .chip:active, .btn:active { transform: scale(.98); }
+.food .n { font-weight: 600; font-size: 15px; line-height: 1.25; }
+.food .d { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.food.add { align-items: center; justify-content: center; border-style: dashed; color: var(--accent); font-weight: 600; background: transparent; box-shadow: none; }
+.editing .food:not(.add), .editing .chip { outline: 2px dashed var(--warn); outline-offset: -2px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { min-height: 52px; padding: 8px 14px; border-radius: 12px; background: var(--accent-soft); color: var(--text); text-align: left; }
+.chip .n { font-weight: 600; font-size: 15px; }
+.chip .d { font-size: 12px; color: var(--muted); }
+.chip.add { background: transparent; border: 1px dashed var(--line); color: var(--accent); font-weight: 600; }
+.linkbtn { color: var(--accent); font-weight: 600; font-size: 14px; min-height: 40px; padding: 0 6px; }
+
+/* Liste */
+.list { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.item { display: flex; align-items: center; gap: 10px; padding: 10px 6px 10px 14px; border-top: 1px solid var(--line); min-height: 60px; }
+.item:first-child { border-top: 0; }
+.item .main { flex: 1; min-width: 0; }
+.item .n { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .d { font-size: 13px; color: var(--muted); }
+.item .v { text-align: right; font-size: 14px; white-space: nowrap; }
+.item .v b { font-size: 16px; }
+.del { min-width: 48px; min-height: 48px; font-size: 22px; color: var(--muted); border-radius: 10px; }
+.del:active { color: var(--danger); }
+.mark { min-width: 40px; text-align: center; font-size: 20px; font-weight: 700; }
+.empty { padding: 20px; text-align: center; color: var(--muted); font-size: 14px; }
+button.item { width: 100%; text-align: left; }
+.ok { color: var(--accent); }
+.bad { color: var(--warn); }
+.tag { display: inline-block; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--track); color: var(--muted); margin-left: 4px; }
+
+/* Genel butonlar */
+.btn { min-height: 50px; padding: 0 18px; border-radius: 12px; font-weight: 600; background: var(--track); width: 100%; }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn.danger { background: transparent; color: var(--danger); }
+.btns { display: grid; gap: 8px; margin-top: 16px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* Alt menü */
+nav.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; display: grid; grid-template-columns: repeat(3, 1fr);
+  background: var(--card); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom);
+}
+nav.tabs button { min-height: 60px; font-size: 13px; font-weight: 600; color: var(--muted); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+nav.tabs button span { font-size: 20px; line-height: 1; }
+nav.tabs button.on { color: var(--accent); }
+
+/* Alt sayfa (dialog) */
+dialog {
+  border: 0; padding: 0; margin: auto auto 0; width: 100%; max-width: 560px; max-height: 92vh;
+  border-radius: 20px 20px 0 0; background: var(--card); color: var(--text);
+}
+@media (min-width: 700px) { dialog { margin: auto; border-radius: 20px; } }
+dialog::backdrop { background: rgba(0,0,0,.45); }
+.sheet { padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }
+.sheet h3 { margin: 0 0 2px; font-size: 20px; }
+.qty { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
+.qty button { min-height: 72px; border-radius: 12px; background: var(--accent-soft); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.qty button b { font-size: 20px; }
+.qty button span { font-size: 11.5px; color: var(--muted); }
+.inline { display: flex; gap: 8px; align-items: stretch; }
+.inline input { flex: 1; }
+.inline .btn { width: auto; }
+.stepper { display: flex; align-items: center; gap: 4px; }
+.stepper button { width: 44px; height: 44px; border-radius: 10px; background: var(--track); font-size: 20px; font-weight: 600; }
+.stepper output { min-width: 34px; text-align: center; font-weight: 600; }
+.mealfoods { max-height: 46vh; overflow: auto; margin: 10px -16px 0; padding: 0 16px; }
+.mealfoods .item { padding-left: 0; padding-right: 0; }
+.mealfoods .item.sel .n { color: var(--accent); }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  background: #222; color: #fff; padding: 10px 10px 10px 16px; border-radius: 12px; z-index: 20;
+  display: flex; align-items: center; gap: 12px; font-size: 15px; max-width: calc(100% - 32px);
+}
+.toast button { color: #7ee2a4; font-weight: 700; min-height: 40px; padding: 0 10px; }
+.center { min-height: 80vh; display: flex; flex-direction: column; justify-content: center; max-width: 420px; margin: 0 auto; padding: 16px; }
+.center h1 { font-size: 26px; margin: 0 0 6px; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div id="app"><div class="center muted">Yükleniyor…</div></div>
+<nav class="tabs" id="tabs" hidden>
+  <button data-act="tab" data-v="today"><span>◉</span>Bugün</button>
+  <button data-act="tab" data-v="history"><span>☰</span>Geçmiş</button>
+  <button data-act="tab" data-v="settings"><span>⚙</span>Ayarlar</button>
+</nav>
+<dialog id="sheet"><div class="sheet" id="sheetBody"></div></dialog>
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js" crossorigin="anonymous"></script>
+<script src="app.js"></script>
+<script>
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('sw.js');
+}
+</script>
+</body>
+</html>
