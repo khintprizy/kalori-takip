@@ -77,6 +77,9 @@ h2 { font-size: 15px; font-weight: 600; color: var(--muted); margin: 22px 0 10px
 .macros b { display: block; font-size: 20px; color: var(--text); }
 
 /* Butonlar */
+.search { display: flex; gap: 8px; margin-bottom: 10px; }
+.search input { flex: 1; }
+.food[hidden], .iconbtn[hidden] { display: none; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .food {
   min-height: 72px; text-align: left; padding: 10px 12px; border-radius: 12px;
@@ -175,8 +178,6 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
   <button data-act="tab" data-v="settings"><span>⚙</span>Ayarlar</button>
 </nav>
 <dialog id="sheet"><div class="sheet" id="sheetBody"></div></dialog>
-<script src="config.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js" crossorigin="anonymous"></script>
 <script src="app.js"></script>
 <script>
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {

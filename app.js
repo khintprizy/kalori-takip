@@ -1,7 +1,5 @@
 'use strict';
 (() => {
-  const CFG = window.APP_CONFIG || {};
-
   const DEFAULT_TARGETS = {
     spor: { kcalMin: 2000, kcalMax: 2100, pMin: 115, pMax: 145 },
     dinlenme: { kcalMin: 1800, kcalMax: 1900, pMin: 115, pMax: 145 },
@@ -25,8 +23,6 @@
     ['Tavuk göğsü', '150 g', 150, 180, 35, 0, 4],
   ];
 
-  const TABLES = ['settings', 'foods', 'meals', 'days', 'entries'];
-  const CONFLICT = { settings: 'user_id', days: 'user_id,date', foods: 'id', meals: 'id', entries: 'id' };
   const COLS = {
     settings: ['targets', 'updated_at'],
     foods: ['id', 'name', 'portion', 'grams', 'kcal', 'protein', 'carb', 'fat', 'sort', 'created_at'],
@@ -64,26 +60,37 @@
     del(k) { try { localStorage.removeItem(k); } catch { /* yok say */ } },
   };
 
-  // ---------- durum ----------
-  let sb = null;
-  let user = null;
+  // ---------- durum (her şey bu cihazda, localStorage'da) ----------
+  const DATA_KEY = 'kt:local';
   let S = emptyState();
-  let queue = [];
   let tab = 'today';
   let curDate = todayStr();
   let lastToday = curDate;
   let editMode = false;
-  let syncing = false, syncAgain = false, syncErr = '', needLogin = false, loginVisible = false;
-  let syncTimer = null;
   let sheetCtx = null;
-  let login = { email: '', sent: false, msg: '' };
+  let foodQuery = '';
+
+  // Türkçe karakterleri sadeleştirir: "suzme" yazınca "Süzme" de bulunur.
+  const norm = (s) => String(s || '').toLocaleLowerCase('tr').replace(/[ıîâûşğüöç]/g, (c) => ({ ı: 'i', î: 'i', â: 'a', û: 'u', ş: 's', ğ: 'g', ü: 'u', ö: 'o', ç: 'c' }[c]));
+  const matches = (name) => { const q = norm(foodQuery).trim(); return !q || q.split(/\s+/).every((w) => norm(name).includes(w)); };
+  function filterFoods() {
+    let any = false;
+    document.querySelectorAll('#foodGrid .food[data-q]').forEach((b) => {
+      const ok = matches(b.dataset.q);
+      b.hidden = !ok;
+      any = any || ok;
+    });
+    $('#noFood').hidden = any;
+    $('[data-act="clearSearch"]').hidden = !foodQuery;
+  }
 
   function emptyState() { return { settings: null, foods: [], meals: [], days: [], entries: [] }; }
-  const dataKey = () => 'kt:data:' + user.id;
-  const queueKey = () => 'kt:queue:' + user.id;
-  function persist() { LS.set(dataKey(), S); LS.set(queueKey(), queue); }
+  function persist() {
+    try { localStorage.setItem(DATA_KEY, JSON.stringify(S)); }
+    catch (e) { console.warn(e); toast('Kaydedilemedi! Cihaz hafızası dolu olabilir, yedek al.'); }
+  }
 
-  // ---------- veri işlemleri (önce yerel, sonra senkron) ----------
+  // ---------- veri işlemleri ----------
   function applyOp(state, op) {
     if (op.table === 'settings') { if (op.op === 'upsert') state.settings = op.row; return; }
     const arr = state[op.table];
@@ -96,101 +103,9 @@
   const del = (table, id) => ({ table, op: 'delete', id });
 
   function commit(ops) {
-    for (const op of ops) {
-      if (op.op === 'upsert') op.row = { ...op.row, user_id: user.id };
-      applyOp(S, op);
-      queue.push(op);
-    }
+    for (const op of ops) applyOp(S, op);
     persist();
     render();
-    scheduleSync();
-  }
-
-  function scheduleSync() { clearTimeout(syncTimer); syncTimer = setTimeout(sync, 400); }
-
-  // Kalıcı (tekrar denense de düzelmeyecek) veritabanı hataları; bunlar kuyruktan atılır.
-  const isPermanent = (err) => !!err && typeof err.code === 'string' && (/^[0-9A-Z]{5}$/.test(err.code) || /^PGRST[12]/.test(err.code));
-
-  async function flush() {
-    while (queue.length) {
-      const first = queue[0];
-      let n = 1;
-      if (first.op === 'upsert') {
-        while (n < queue.length && n < 500 && queue[n].op === 'upsert' && queue[n].table === first.table) n++;
-      }
-      const batch = queue.slice(0, n);
-      let res;
-      if (first.op === 'upsert') {
-        const rows = new Map();
-        batch.forEach((o) => rows.set(keyOf(o.table, o.row), o.row));
-        res = await sb.from(first.table).upsert([...rows.values()], { onConflict: CONFLICT[first.table] });
-      } else {
-        res = await sb.from(first.table).delete().eq('id', first.id);
-      }
-      if (res.error) {
-        if (!isPermanent(res.error)) throw res.error;
-        console.warn('Sunucu kaydı reddetti, atlanıyor:', res.error, batch);
-        toast('Bir değişiklik sunucuya yazılamadı: ' + res.error.message);
-      }
-      queue.splice(0, n);
-      LS.set(queueKey(), queue);
-    }
-  }
-
-  async function fetchAll(table, order) {
-    const out = [];
-    const size = 1000;
-    for (let from = 0; ; from += size) {
-      let q = sb.from(table).select('*');
-      order.forEach((c) => { q = q.order(c); });
-      const { data, error } = await q.range(from, from + size - 1);
-      if (error) throw error;
-      out.push(...data);
-      if (data.length < size) break;
-    }
-    return out;
-  }
-
-  async function pullAll() {
-    const st = await sb.from('settings').select('*').maybeSingle();
-    if (st.error) throw st.error;
-    const [foods, meals, days, entries] = await Promise.all([
-      fetchAll('foods', ['sort', 'created_at', 'id']),
-      fetchAll('meals', ['created_at', 'id']),
-      fetchAll('days', ['date']),
-      fetchAll('entries', ['date', 'created_at', 'id']),
-    ]);
-    return { settings: st.data, foods, meals, days, entries };
-  }
-
-  async function sync() {
-    if (!user || !sb || !navigator.onLine) return setStatus();
-    if (syncing) { syncAgain = true; return; }
-    syncing = true;
-    setStatus();
-    const before = JSON.stringify(S);
-    let seeded = false;
-    try {
-      const { data: { session } } = await sb.auth.getSession();
-      if (!session || session.user.id !== user.id) { needLogin = true; throw new Error('Oturum yok'); }
-      needLogin = false;
-      await flush();
-      const pulled = await pullAll();
-      for (const op of queue) applyOp(pulled, op); // çekme sırasında eklenenler kaybolmasın
-      S = pulled;
-      persist();
-      syncErr = '';
-      if (!S.settings && !queue.length) { seed(); seeded = true; }
-    } catch (e) {
-      console.warn('Senkron:', e);
-      syncErr = e.message || String(e);
-    }
-    syncing = false;
-    const active = document.activeElement;
-    const typing = active && active.tagName === 'INPUT' && $('#app').contains(active);
-    if (!seeded && JSON.stringify(S) !== before && !typing) render();
-    setStatus();
-    if (syncAgain) { syncAgain = false; sync(); }
   }
 
   function seed() {
@@ -200,6 +115,20 @@
       ops.push(up('foods', { id: uuid(), name, portion, grams, kcal, protein, carb, fat, sort: i, created_at: new Date(t + i).toISOString() }));
     });
     commit(ops);
+  }
+
+  // Yerel veriyi yükler; yoksa eski (girişli) sürümün bu cihazdaki kopyasını bir kez taşır.
+  function loadState() {
+    const cur = LS.get(DATA_KEY, null);
+    if (cur) return Object.assign(emptyState(), cur);
+    const last = LS.get('kt:lastUser', null);
+    const old = last && LS.get('kt:data:' + last.id, null);
+    if (!old) return null;
+    const strip = (r) => { const { user_id, ...rest } = r; return rest; };
+    const st = Object.assign(emptyState(), old);
+    st.settings = st.settings ? strip(st.settings) : null;
+    for (const t of ['foods', 'meals', 'days', 'entries']) st[t] = (st[t] || []).map(strip);
+    return st;
   }
 
   // ---------- hesaplamalar ----------
@@ -226,25 +155,6 @@
   }
 
   // ---------- görünüm ----------
-  function statusInfo() {
-    const n = queue.length;
-    const wait = n ? ` · ${n} değişiklik bekliyor` : '';
-    if (!navigator.onLine) return { cls: 'offline', text: 'Çevrimdışı' + wait };
-    if (!sb) return { cls: 'pending', text: 'Sunucuya bağlanılamadı' + wait };
-    if (needLogin) return { cls: 'pending', text: 'Senkron için tekrar giriş gerekli · <button class="linkbtn" data-act="relogin">Giriş yap</button>' };
-    if (syncing) return { cls: 'pending', text: 'Senkronize ediliyor…' };
-    if (syncErr) return { cls: 'pending', text: 'Senkron başarısız, tekrar denenecek' + wait };
-    if (n) return { cls: 'pending', text: `${n} değişiklik bekliyor` };
-    return { cls: '', text: 'Senkronize' };
-  }
-  function setStatus() {
-    const el = $('#status');
-    if (!el) return;
-    const s = statusInfo();
-    el.className = 'status ' + s.cls;
-    el.innerHTML = `<span class="dot"></span>${s.text}`;
-  }
-
   function metric(label, val, min, max, unit) {
     const top = Math.max(max * 1.15, val, 1);
     const cls = val > max ? 'over' : val >= min ? 'ok' : '';
@@ -271,7 +181,6 @@
       <div class="date">${isToday ? 'Bugün' : esc(fmtWeekday(curDate))}<div class="small muted">${esc(fmtLong(curDate))}</div></div>
       <button class="iconbtn" data-act="day" data-v="1" aria-label="Sonraki gün" ${isToday ? 'disabled' : ''}>›</button>
     </div>
-    <div class="status" id="status"></div>
     <div class="seg">
       <button data-act="dayType" data-v="spor" class="${type === 'spor' ? 'on' : ''}">Spor günü</button>
       <button data-act="dayType" data-v="dinlenme" class="${type === 'dinlenme' ? 'on' : ''}">Dinlenme günü</button>
@@ -290,10 +199,15 @@
 
     <h2>Yiyecekler <button class="linkbtn" data-act="toggleEdit">${editMode ? 'Bitti' : 'Düzenle'}</button></h2>
     ${editMode ? '<p class="small muted" style="margin:-4px 0 10px">Düzenlemek istediğin yiyeceğe veya öğüne dokun.</p>' : ''}
-    <div class="grid">
-      ${foods.map((f) => `<button class="food" data-act="food" data-id="${f.id}"><div class="n">${esc(f.name)}</div><div class="d">${esc(f.portion)}<br>${f0(f.kcal)} kcal · ${f1(f.protein)} g P</div></button>`).join('')}
+    <div class="search">
+      <input id="foodSearch" type="text" placeholder="Yiyecek ara…" value="${esc(foodQuery)}" autocomplete="off" enterkeyhint="search">
+      <button class="iconbtn" data-act="clearSearch" aria-label="Aramayı temizle" ${foodQuery ? '' : 'hidden'}>×</button>
+    </div>
+    <div class="grid" id="foodGrid">
+      ${foods.map((f) => `<button class="food" data-act="food" data-id="${f.id}" data-q="${esc(norm(f.name))}" ${matches(f.name) ? '' : 'hidden'}><div class="n">${esc(f.name)}</div><div class="d">${esc(f.portion)}<br>${f0(f.kcal)} kcal · ${f1(f.protein)} g P</div></button>`).join('')}
       <button class="food add" data-act="foodEdit">+ Yeni yiyecek</button>
     </div>
+    <div class="empty" id="noFood" ${foods.some((f) => matches(f.name)) ? 'hidden' : ''}>Eşleşen yiyecek yok.</div>
 
     <h2>${isToday ? 'Bugün eklenenler' : 'Bu gün eklenenler'} <span class="small">${list.length ? list.length + ' kayıt' : ''}</span></h2>
     <div class="list">
@@ -351,72 +265,27 @@
       ${targetInputs('dinlenme', 'Dinlenme günü')}
       <button class="btn primary" data-act="saveTargets">Hedefleri kaydet</button>
 
-      <h2>Senkronizasyon</h2>
+      <h2>Günlük makrolar</h2>
       <div class="card">
-        <div class="status" id="status" style="text-align:left"></div>
-        <div class="btns"><button class="btn" data-act="syncNow">Şimdi senkronize et</button></div>
+        <div class="small muted">Her günün toplam kalori, protein, karbonhidrat ve yağını; ayrıca aylık ortalamaları içeren bir dosya indirir.</div>
+        <div class="btns"><button class="btn" data-act="exportDaily">Günlük makroları indir (JSON)</button></div>
       </div>
 
       <h2>Yedek</h2>
       <div class="card">
-        <div class="small muted">İçe aktarma mevcut verilerle birleştirir; aynı kayıtlar güncellenir, hiçbir şey silinmez.</div>
+        <div class="small muted">Veriler sadece bu cihazda saklanır. Ara ara yedek alıp dosyayı güvenli bir yere (Drive, e-posta vb.) koy. İçe aktarma mevcut verilerle birleştirir; aynı kayıtlar güncellenir, hiçbir şey silinmez.</div>
         <div class="btns two">
           <button class="btn" data-act="export">Dışa aktar (JSON)</button>
           <button class="btn" data-act="import">İçe aktar</button>
         </div>
         <input type="file" id="importFile" accept="application/json,.json" hidden>
-      </div>
-
-      <h2>Hesap</h2>
-      <div class="card">
-        <div class="small muted">Giriş yapılan e-posta</div>
-        <div>${esc(user.email || '')}</div>
-        <div class="btns"><button class="btn danger" data-act="logout">Çıkış yap</button></div>
       </div>`;
   }
 
   function render() {
-    if (!user || loginVisible) return;
     const html = tab === 'today' ? renderToday() : tab === 'history' ? renderHistory() : renderSettings();
     $('#app').innerHTML = `<main class="${editMode && tab === 'today' ? 'editing' : ''}">${html}</main>`;
     document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.v === tab));
-    setStatus();
-  }
-
-  // ---------- giriş ----------
-  function showLogin(msg) {
-    loginVisible = true;
-    if (msg !== undefined) login.msg = msg;
-    $('#tabs').hidden = true;
-    const offline = !navigator.onLine;
-    $('#app').innerHTML = `<div class="center">
-      <h1>Kalori Takip</h1>
-      <p class="muted">Bir kez giriş yapman yeterli, oturum hatırlanır.</p>
-      <label for="email">E-posta</label>
-      <input id="email" type="email" inputmode="email" autocomplete="email" value="${esc(login.email)}">
-      <label for="password">Şifre</label>
-      <input id="password" type="password" autocomplete="current-password">
-      <div class="btns">
-        <button class="btn primary" data-act="signIn" ${offline ? 'disabled' : ''}>Giriş yap</button>
-        <button class="btn" data-act="sendLink" ${offline ? 'disabled' : ''}>Şifresiz: e-postama giriş bağlantısı gönder</button>
-      </div>
-      <p class="small muted">E-posta bağlantısı bilgisayarda ve Android'de çalışır. iPhone'da ana ekrandan açtıysan şifreyle giriş yap.</p>
-      ${offline ? '<p class="bad small">Giriş için internet bağlantısı gerekli.</p>' : ''}
-      ${login.msg ? `<p class="small">${esc(login.msg)}</p>` : ''}
-      ${user ? '<div class="btns"><button class="btn" data-act="cancelLogin">Uygulamaya dön</button></div>' : ''}
-    </div>`;
-  }
-
-  function startApp(u) {
-    user = { id: u.id, email: u.email };
-    LS.set('kt:lastUser', user);
-    S = Object.assign(emptyState(), LS.get(dataKey(), {}));
-    queue = LS.get(queueKey(), []);
-    needLogin = false;
-    loginVisible = false;
-    $('#tabs').hidden = false;
-    render();
-    sync();
   }
 
   // ---------- alt sayfalar ----------
@@ -468,6 +337,7 @@
   }
 
   function addEntries(entries, msg) {
+    foodQuery = '';
     commit(entries.map((e) => up('entries', e)));
     toast(msg, () => commit(entries.map((e) => del('entries', e.id))));
   }
@@ -563,21 +433,65 @@
   }
 
   // ---------- yedek ----------
-  function exportJson() {
-    const strip = (r) => { const { user_id, ...rest } = r; return rest; };
-    const data = {
-      app: 'kalori-takip', version: 1, exported_at: nowIso(),
-      settings: S.settings ? strip(S.settings) : null,
-      foods: S.foods.map(strip), meals: S.meals.map(strip), days: S.days.map(strip), entries: S.entries.map(strip),
-    };
+  function download(data, filename) {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `kalori-yedek-${todayStr()}.json`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  function exportJson() {
+    const data = {
+      app: 'kalori-takip', version: 1, exported_at: nowIso(),
+      settings: S.settings, foods: S.foods, meals: S.meals, days: S.days, entries: S.entries,
+    };
+    download(data, `kalori-yedek-${todayStr()}.json`);
+  }
+
+  // Sadece günlük toplamlar + aylık ortalamalar (okumak için; içe aktarılamaz).
+  function exportDaily() {
+    const T = targets();
+    const dates = [...new Set(S.entries.map((e) => e.date))].sort();
+    if (!dates.length) return toast('Henüz kayıt yok.');
+    const gunler = dates.map((date) => {
+      const list = S.entries.filter((e) => e.date === date);
+      const tot = sum(list);
+      const type = dayType(date);
+      const t = T[type];
+      return {
+        tarih: date,
+        gun_tipi: type,
+        kcal: Math.round(tot.kcal),
+        protein: r1(tot.protein),
+        karbonhidrat: r1(tot.carb),
+        yag: r1(tot.fat),
+        kayit_sayisi: list.length,
+        hedefte: tot.kcal >= t.kcalMin && tot.kcal <= t.kcalMax && tot.protein >= t.pMin && tot.protein <= t.pMax,
+      };
+    });
+    const months = new Map();
+    for (const g of gunler) {
+      const k = g.tarih.slice(0, 7);
+      if (!months.has(k)) months.set(k, []);
+      months.get(k).push(g);
+    }
+    const avg = (arr, k) => r1(arr.reduce((a, g) => a + g[k], 0) / arr.length);
+    const aylar = [...months].map(([ay, arr]) => ({
+      ay,
+      gun_sayisi: arr.length,
+      ortalama_kcal: Math.round(avg(arr, 'kcal')),
+      ortalama_protein: avg(arr, 'protein'),
+      ortalama_karbonhidrat: avg(arr, 'karbonhidrat'),
+      ortalama_yag: avg(arr, 'yag'),
+      toplam_kcal: arr.reduce((a, g) => a + g.kcal, 0),
+      hedefte_gun: arr.filter((g) => g.hedefte).length,
+    }));
+    download({ app: 'kalori-takip', tur: 'gunluk-makrolar', exported_at: nowIso(), hedefler: T, aylar, gunler },
+      `gunluk-makrolar-${todayStr()}.json`);
   }
 
   async function importJson(file) {
@@ -610,6 +524,7 @@
     toggleEdit: () => { editMode = !editMode; render(); },
     food: (b) => { const f = foodById(b.dataset.id); if (!f) return; editMode ? openFoodEdit(f) : openPortion(f); },
     foodEdit: (b) => openFoodEdit(b.dataset.id ? foodById(b.dataset.id) : null),
+    clearSearch: () => { foodQuery = ''; $('#foodSearch').value = ''; filterFoods(); },
     addQty: (b) => { const f = sheetCtx.food; const q = +b.dataset.v; closeSheet(); addEntries([makeEntry(f, q, null)], `${f.name} eklendi`); },
     addCustom: () => {
       const c = customQty();
@@ -686,43 +601,9 @@
       commit([up('settings', { targets: t, updated_at: nowIso() })]);
       toast('Hedefler kaydedildi');
     },
-    syncNow: () => { syncErr = ''; sync(); },
     export: exportJson,
+    exportDaily,
     import: () => $('#importFile').click(),
-    logout: async () => {
-      const msg = queue.length
-        ? `${queue.length} değişiklik henüz sunucuya gönderilmedi ve çıkış yaparsan kaybolacak. Yine de çıkılsın mı?`
-        : 'Çıkış yapılsın mı? Tekrar girmek için e-posta bağlantısı gerekecek.';
-      if (!confirm(msg)) return;
-      try { await sb?.auth.signOut(); } catch (e) { console.warn(e); }
-      LS.del(dataKey()); LS.del(queueKey()); LS.del('kt:lastUser');
-      user = null; S = emptyState(); queue = [];
-      login = { email: '', sent: false, msg: '' };
-      showLogin();
-    },
-    relogin: () => { login.email = user?.email || ''; showLogin(''); },
-    cancelLogin: () => { loginVisible = false; $('#tabs').hidden = false; render(); },
-    sendLink: async (b) => {
-      const email = $('#email').value.trim();
-      login.email = email;
-      if (!/^\S+@\S+\.\S+$/.test(email)) return showLogin('Geçerli bir e-posta gir.');
-      if (!sb) return showLogin('Supabase bağlantısı kurulamadı.');
-      b.disabled = true; b.textContent = 'Gönderiliyor…';
-      const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
-      if (error) return showLogin('Gönderilemedi: ' + error.message);
-      showLogin('E-posta gönderildi. Gelen kutunu (ve spam klasörünü) kontrol et, bağlantıya tıkla.');
-    },
-    signIn: async (b) => {
-      const email = $('#email').value.trim();
-      const password = $('#password').value;
-      login.email = email;
-      if (!/^\S+@\S+\.\S+$/.test(email) || !password) return showLogin('E-posta ve şifreyi gir.');
-      if (!sb) return showLogin('Supabase bağlantısı kurulamadı.');
-      b.disabled = true; b.textContent = 'Giriş yapılıyor…';
-      const { data, error } = await sb.auth.signInWithPassword({ email, password });
-      if (error) return showLogin(/invalid/i.test(error.message) ? 'E-posta veya şifre hatalı.' : 'Giriş yapılamadı: ' + error.message);
-      startApp(data.user);
-    },
   };
 
   document.addEventListener('click', (ev) => {
@@ -732,6 +613,7 @@
     if (fn) fn(b, ev);
   });
   document.addEventListener('input', (ev) => {
+    if (ev.target.id === 'foodSearch') { foodQuery = ev.target.value; filterFoods(); }
     if (ev.target.id === 'customQty') {
       const c = customQty();
       const f = sheetCtx?.food;
@@ -739,54 +621,29 @@
     }
   });
   document.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Enter') return;
-    const id = ev.target.id;
-    if (id === 'customQty') actions.addCustom();
-    else if (id === 'email') $('#password')?.focus();
-    else if (id === 'password') $('[data-act="signIn"]')?.click();
+    if (ev.key === 'Enter' && ev.target.id === 'customQty') actions.addCustom();
+    if (ev.key === 'Enter' && ev.target.id === 'foodSearch') ev.target.blur(); // klavyeyi kapat
   });
   document.addEventListener('change', (ev) => {
     if (ev.target.id === 'importFile' && ev.target.files[0]) { importJson(ev.target.files[0]); ev.target.value = ''; }
   });
   $('#sheet').addEventListener('click', (ev) => { if (ev.target.id === 'sheet') closeSheet(); });
   $('#sheet').addEventListener('close', () => { sheetCtx = null; });
-  window.addEventListener('online', () => { setStatus(); sync(); });
-  window.addEventListener('offline', setStatus);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible' || !user) return;
+    if (document.visibilityState !== 'visible') return;
     const t = todayStr();
     if (t !== lastToday) { if (curDate === lastToday) curDate = t; lastToday = t; render(); }
-    sync();
   });
 
   // ---------- başlangıç ----------
-  async function init() {
-    if (!CFG.SUPABASE_URL || /PROJE-KODUN/.test(CFG.SUPABASE_URL) || /BURAYA/.test(CFG.SUPABASE_KEY || '')) {
-      $('#app').innerHTML = '<div class="center"><h1>Kurulum eksik</h1><p class="muted">config.js dosyasına Supabase adresini ve anahtarını yaz.</p></div>';
-      return;
-    }
-    const last = LS.get('kt:lastUser', null);
-    const hash = new URLSearchParams(location.hash.slice(1));
-    const hashErr = hash.get('error_description');
-
-    if (window.supabase) {
-      sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, {
-        auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'implicit' },
-      });
-    }
-    let session = null;
-    if (sb) { try { ({ data: { session } } = await sb.auth.getSession()); } catch (e) { console.warn(e); } }
+  function init() {
+    // Tarayıcıdan verileri kendiliğinden silmemesini iste (destekleniyorsa).
+    try { navigator.storage?.persist?.(); } catch { /* yok say */ }
     if (location.hash) history.replaceState(null, '', location.pathname + location.search);
-
-    if (session) startApp(session.user);
-    else if (last) startApp(last); // çevrimdışıyken de yerel verilerle aç; oturum gerekiyorsa üstte uyarı çıkar
-    else showLogin(hashErr ? 'Bağlantı geçersiz veya süresi dolmuş, yeniden iste.' : (sb ? '' : 'Supabase kütüphanesi yüklenemedi. İnternet bağlantını kontrol et.'));
-
-    sb?.auth.onAuthStateChange((event, s) => setTimeout(() => {
-      if (!s?.user) return;
-      if (!user || user.id !== s.user.id || loginVisible) startApp(s.user);
-      else if (needLogin) { needLogin = false; sync(); }
-    }, 0));
+    $('#tabs').hidden = false;
+    const st = loadState();
+    if (st) { S = st; persist(); render(); }
+    else seed();
   }
 
   init();
