@@ -1,9 +1,10 @@
 'use strict';
 (() => {
   const DEFAULT_TARGETS = {
-    spor: { kcalMin: 2000, kcalMax: 2100, pMin: 115, pMax: 145 },
-    dinlenme: { kcalMin: 1800, kcalMax: 1900, pMin: 115, pMax: 145 },
+    spor: { kcalMin: 2000, kcalMax: 2100, pMin: 115, pMax: 145, fMin: 55, fMax: 60 },
+    dinlenme: { kcalMin: 1800, kcalMax: 1900, pMin: 115, pMax: 145, fMin: 55, fMax: 60 },
   };
+  const TARGET_KEYS = ['kcalMin', 'kcalMax', 'pMin', 'pMax', 'fMin', 'fMax'];
 
   // [ad, porsiyon, porsiyon gramı (gramla ekleme için), kcal, protein, karb, yağ]
   const STARTER = [
@@ -132,7 +133,19 @@
   }
 
   // ---------- hesaplamalar ----------
-  const targets = () => ({ ...DEFAULT_TARGETS, ...(S.settings?.targets || {}) });
+  function targets() {
+    const saved = S.settings?.targets || {};
+    const out = {};
+    for (const type of ['spor', 'dinlenme']) {
+      const t = { ...DEFAULT_TARGETS[type], ...(saved[type] || {}) };
+      // Karbonhidrat = protein ve yağ hedeflerinin (orta noktaları) kalorisi düşüldükten sonra kalan kalori / 4
+      const rest = (+t.pMin + +t.pMax) / 2 * 4 + (+t.fMin + +t.fMax) / 2 * 9;
+      t.cMin = Math.max(0, Math.round((t.kcalMin - rest) / 4));
+      t.cMax = Math.max(0, Math.round((t.kcalMax - rest) / 4));
+      out[type] = t;
+    }
+    return out;
+  }
   const dayType = (date) => S.days.find((d) => d.date === date)?.day_type || 'spor';
   const entriesOn = (date) => S.entries.filter((e) => e.date === date).sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
   const sum = (list) => list.reduce((a, e) => ({ kcal: a.kcal + (+e.kcal || 0), protein: a.protein + (+e.protein || 0), carb: a.carb + (+e.carb || 0), fat: a.fat + (+e.fat || 0) }), { kcal: 0, protein: 0, carb: 0, fat: 0 });
@@ -158,11 +171,12 @@
   function metric(label, val, min, max, unit) {
     const top = Math.max(max * 1.15, val, 1);
     const cls = val > max ? 'over' : val >= min ? 'ok' : '';
-    const note = val < min ? `${f0(min - val)} ${unit} kaldı` : val > max ? `${f0(val - max)} ${unit} fazla` : 'hedefte ✓';
+    const note = val < min ? `${f0(min - val)} kaldı` : val > max ? `${f0(val - max)} fazla` : 'hedefte ✓';
     return `<div class="metric">
       <div class="row">
-        <div><span class="big">${f0(val)}</span><span class="unit">${unit === 'kcal' ? 'kcal' : 'g ' + label}</span></div>
-        <div class="goal">hedef ${f0(min)}–${f0(max)}<br><span class="${cls === 'ok' ? 'ok' : cls === 'over' ? 'bad' : ''}">${note}</span></div>
+        <span class="lbl">${label}</span>
+        <span class="val"><b>${f0(val)}</b> / ${f0(min)}–${f0(max)} ${unit}</span>
+        <span class="note ${cls === 'ok' ? 'ok' : cls === 'over' ? 'bad' : ''}">${note}</span>
       </div>
       <div class="bar"><div class="band" style="left:${(min / top) * 100}%;width:${((max - min) / top) * 100}%"></div><div class="fill ${cls}" style="width:${Math.min(val / top, 1) * 100}%"></div></div>
     </div>`;
@@ -186,9 +200,10 @@
       <button data-act="dayType" data-v="dinlenme" class="${type === 'dinlenme' ? 'on' : ''}">Dinlenme günü</button>
     </div>
     <div class="card total">
-      ${metric('kcal', tot.kcal, t.kcalMin, t.kcalMax, 'kcal')}
-      ${metric('protein', tot.protein, t.pMin, t.pMax, 'g')}
-      <div class="macros"><div><b>${f0(tot.carb)} g</b>Karbonhidrat</div><div><b>${f0(tot.fat)} g</b>Yağ</div></div>
+      ${metric('Kalori', tot.kcal, t.kcalMin, t.kcalMax, 'kcal')}
+      ${metric('Protein', tot.protein, t.pMin, t.pMax, 'g')}
+      ${metric('Karb', tot.carb, t.cMin, t.cMax, 'g')}
+      ${metric('Yağ', tot.fat, t.fMin, t.fMax, 'g')}
     </div>
 
     <h2>Öğünler</h2>
@@ -205,6 +220,7 @@
     </div>
     <div class="grid" id="foodGrid">
       ${foods.map((f) => `<button class="food" data-act="food" data-id="${f.id}" data-q="${esc(norm(f.name))}" ${matches(f.name) ? '' : 'hidden'}><div class="n">${esc(f.name)}</div><div class="d">${esc(f.portion)}<br>${f0(f.kcal)} kcal · ${f1(f.protein)} g P</div></button>`).join('')}
+      <button class="food add" data-act="quickAdd">+ Direkt makro</button>
       <button class="food add" data-act="foodEdit">+ Yeni yiyecek</button>
     </div>
     <div class="empty" id="noFood" ${foods.some((f) => matches(f.name)) ? 'hidden' : ''}>Eşleşen yiyecek yok.</div>
@@ -255,6 +271,8 @@
       <b>${title}</b>
       <div class="two"><div><label>Kalori min</label>${inp('kcalMin', t.kcalMin)}</div><div><label>Kalori max</label>${inp('kcalMax', t.kcalMax)}</div></div>
       <div class="two"><div><label>Protein min (g)</label>${inp('pMin', t.pMin)}</div><div><label>Protein max (g)</label>${inp('pMax', t.pMax)}</div></div>
+      <div class="two"><div><label>Yağ min (g)</label>${inp('fMin', t.fMin)}</div><div><label>Yağ max (g)</label>${inp('fMax', t.fMax)}</div></div>
+      <div class="small muted" style="margin-top:10px">Karbonhidrat (otomatik): <b>${f0(t.cMin)}–${f0(t.cMax)} g</b> · protein ve yağdan kalan kalori</div>
     </div>`;
   }
 
@@ -364,6 +382,47 @@
         ${isNew ? '' : '<button class="btn danger" data-act="deleteFood">Yiyeceği sil</button>'}
         <button class="btn" data-act="closeSheet">Vazgeç</button>
       </div>`, { food: isNew ? null : f });
+  }
+
+  // Listeye kaydetmeden, o güne doğrudan makro ekler.
+  function openQuickAdd() {
+    openSheet(`
+      <h3>Direkt makro ekle</h3>
+      <div class="small muted">Listeye kaydedilmez, sadece ${curDate === todayStr() ? 'bugüne' : 'bu güne'} eklenir.</div>
+      <label for="qa_name">Ne yedin? (opsiyonel)</label>
+      <input id="qa_name" placeholder="örn. Kumpir" autocomplete="off">
+      <div class="two">
+        <div><label for="qa_protein">Protein (g)</label><input id="qa_protein" inputmode="decimal"></div>
+        <div><label for="qa_carb">Karbonhidrat (g)</label><input id="qa_carb" inputmode="decimal"></div>
+        <div><label for="qa_fat">Yağ (g)</label><input id="qa_fat" inputmode="decimal"></div>
+        <div><label for="qa_kcal">Kalori (kcal)</label><input id="qa_kcal" inputmode="decimal" placeholder="otomatik"></div>
+      </div>
+      <div class="small muted" style="margin-top:6px">Kaloriyi boş bırakırsan makrolardan hesaplanır.</div>
+      <p class="small bad" id="qa_err"></p>
+      <div class="btns two">
+        <button class="btn primary" data-act="saveQuick">Ekle</button>
+        <button class="btn" data-act="closeSheet">Vazgeç</button>
+      </div>`);
+  }
+  function quickVals() {
+    const v = {};
+    for (const k of ['protein', 'carb', 'fat', 'kcal']) {
+      const raw = $('#qa_' + k).value.trim();
+      v[k] = raw === '' ? null : num(raw);
+      if (v[k] !== null && !(v[k] >= 0)) return null;
+    }
+    v.auto = r1((v.protein || 0) * 4 + (v.carb || 0) * 4 + (v.fat || 0) * 9);
+    return v;
+  }
+  function saveQuick() {
+    const v = quickVals();
+    if (!v) { $('#qa_err').textContent = 'Değerler sayı olmalı.'; return; }
+    const kcal = v.kcal ?? v.auto;
+    if (!(kcal > 0)) { $('#qa_err').textContent = 'En az bir değer gir.'; return; }
+    const name = $('#qa_name').value.trim() || 'Direkt makro';
+    const e = { id: uuid(), date: curDate, food_id: null, name, qty: 1, qty_label: 'direkt makro', kcal: r1(kcal), protein: r1(v.protein), carb: r1(v.carb), fat: r1(v.fat), created_at: nowIso() };
+    closeSheet();
+    addEntries([e], `${name} eklendi`);
   }
 
   function saveFood() {
@@ -524,6 +583,8 @@
     toggleEdit: () => { editMode = !editMode; render(); },
     food: (b) => { const f = foodById(b.dataset.id); if (!f) return; editMode ? openFoodEdit(f) : openPortion(f); },
     foodEdit: (b) => openFoodEdit(b.dataset.id ? foodById(b.dataset.id) : null),
+    quickAdd: openQuickAdd,
+    saveQuick,
     clearSearch: () => { foodQuery = ''; $('#foodSearch').value = ''; filterFoods(); },
     addQty: (b) => { const f = sheetCtx.food; const q = +b.dataset.v; closeSheet(); addEntries([makeEntry(f, q, null)], `${f.name} eklendi`); },
     addCustom: () => {
@@ -590,12 +651,12 @@
       const t = {};
       for (const type of ['spor', 'dinlenme']) {
         t[type] = {};
-        for (const k of ['kcalMin', 'kcalMax', 'pMin', 'pMax']) {
+        for (const k of TARGET_KEYS) {
           const v = num($(`#t_${type}_${k}`).value);
           if (!(v >= 0)) return toast('Hedefler sayı olmalı.');
           t[type][k] = v;
         }
-        if (t[type].kcalMin > t[type].kcalMax || t[type].pMin > t[type].pMax) return toast('Min değer max değerden büyük olamaz.');
+        if (t[type].kcalMin > t[type].kcalMax || t[type].pMin > t[type].pMax || t[type].fMin > t[type].fMax) return toast('Min değer max değerden büyük olamaz.');
       }
       document.activeElement?.blur();
       commit([up('settings', { targets: t, updated_at: nowIso() })]);
@@ -614,6 +675,7 @@
   });
   document.addEventListener('input', (ev) => {
     if (ev.target.id === 'foodSearch') { foodQuery = ev.target.value; filterFoods(); }
+    if (/^qa_(protein|carb|fat)$/.test(ev.target.id)) { const v = quickVals(); $('#qa_kcal').placeholder = v && v.auto ? `otomatik: ${f0(v.auto)}` : 'otomatik'; }
     if (ev.target.id === 'customQty') {
       const c = customQty();
       const f = sheetCtx?.food;

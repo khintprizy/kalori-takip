@@ -62,19 +62,19 @@ h2 { font-size: 15px; font-weight: 600; color: var(--muted); margin: 22px 0 10px
 .seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
 
 /* Toplamlar */
-.total { display: grid; gap: 14px; }
-.metric .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.metric .big { font-size: 30px; font-weight: 700; letter-spacing: -.5px; }
-.metric .unit { font-size: 15px; font-weight: 600; color: var(--muted); margin-left: 3px; }
-.metric .goal { font-size: 14px; color: var(--muted); text-align: right; }
-.bar { position: relative; height: 12px; background: var(--track); border-radius: 6px; overflow: hidden; margin-top: 6px; }
+.total { display: grid; gap: 10px; padding: 12px 14px; }
+.metric .row { display: flex; align-items: baseline; gap: 8px; font-size: 14px; white-space: nowrap; }
+.metric .lbl { width: 54px; flex: none; font-weight: 600; }
+.metric .val { flex: 1; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.metric .val b { font-size: 17px; color: var(--text); }
+.metric .note { flex: none; color: var(--muted); font-size: 13px; }
+.metric .note.ok { color: var(--accent); }
+.metric .note.bad { color: var(--warn); }
+.bar { position: relative; height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; margin-top: 4px; }
 .bar .band { position: absolute; top: 0; bottom: 0; background: var(--band); }
-.bar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; background: var(--muted); transition: width .25s; }
+.bar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--muted); transition: width .25s; }
 .bar .fill.ok { background: var(--accent); }
 .bar .fill.over { background: var(--warn); }
-.macros { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
-.macros div { font-size: 14px; color: var(--muted); }
-.macros b { display: block; font-size: 20px; color: var(--text); }
 
 /* Butonlar */
 .search { display: flex; gap: 8px; margin-bottom: 10px; }
