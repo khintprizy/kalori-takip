@@ -206,10 +206,14 @@
       ${metric('Yağ', tot.fat, t.fMin, t.fMax, 'g')}
     </div>
 
-    <h2>Öğünler</h2>
-    <div class="chips">
-      ${S.meals.map((m) => { const mt = mealTotals(m); return `<button class="chip" data-act="meal" data-id="${m.id}"><div class="n">${esc(m.name)}</div><div class="d">${f0(mt.kcal)} kcal · ${f0(mt.protein)} g protein</div></button>`; }).join('')}
-      <button class="chip add" data-act="mealEdit">+ Öğün</button>
+    <h2>${isToday ? 'Bugün eklenenler' : 'Bu gün eklenenler'} <span class="small">${list.length ? list.length + ' kayıt' : ''}</span></h2>
+    <div class="list">
+      ${list.length ? list.slice().reverse().map((e) => `
+        <div class="item">
+          <div class="main"><div class="n">${esc(e.name)}</div><div class="d">${esc(e.qty_label)}</div></div>
+          <div class="v"><b>${f0(e.kcal)}</b> kcal<br><span class="pcf">${f1(e.protein)}P · ${f1(e.carb)}K · ${f1(e.fat)}Y</span></div>
+          <button class="del" data-act="delEntry" data-id="${e.id}" aria-label="Sil">×</button>
+        </div>`).join('') : '<div class="empty">Henüz bir şey eklenmedi.</div>'}
     </div>
 
     <h2>Yiyecekler <button class="linkbtn" data-act="toggleEdit">${editMode ? 'Bitti' : 'Düzenle'}</button></h2>
@@ -225,14 +229,10 @@
     </div>
     <div class="empty" id="noFood" ${foods.some((f) => matches(f.name)) ? 'hidden' : ''}>Eşleşen yiyecek yok.</div>
 
-    <h2>${isToday ? 'Bugün eklenenler' : 'Bu gün eklenenler'} <span class="small">${list.length ? list.length + ' kayıt' : ''}</span></h2>
-    <div class="list">
-      ${list.length ? list.slice().reverse().map((e) => `
-        <div class="item">
-          <div class="main"><div class="n">${esc(e.name)}</div><div class="d">${esc(e.qty_label)}</div></div>
-          <div class="v"><b>${f0(e.kcal)}</b> kcal<br><span class="muted">${f1(e.protein)} g P</span></div>
-          <button class="del" data-act="delEntry" data-id="${e.id}" aria-label="Sil">×</button>
-        </div>`).join('') : '<div class="empty">Henüz bir şey eklenmedi.</div>'}
+    <h2>Öğünler</h2>
+    <div class="chips">
+      ${S.meals.map((m) => { const mt = mealTotals(m); return `<button class="chip" data-act="meal" data-id="${m.id}"><div class="n">${esc(m.name)}</div><div class="d">${f0(mt.kcal)} kcal · ${f0(mt.protein)} g protein</div></button>`; }).join('')}
+      <button class="chip add" data-act="mealEdit">+ Öğün</button>
     </div>`;
   }
 
